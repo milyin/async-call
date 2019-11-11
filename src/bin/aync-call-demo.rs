@@ -1,5 +1,4 @@
-#![feature(in_band_lifetimes)]
-
+use async_call::{register, Registration};
 use std::fmt;
 
 struct Node<'a> {
@@ -28,7 +27,42 @@ impl fmt::Display for Node<'_> {
     }
 }
 
+struct Foo {
+    _reg: Registration,
+}
+
+impl Foo {
+    fn new() -> Self {
+        Self { _reg: register() }
+    }
+}
+
+impl fmt::Display for Foo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "FOO")
+    }
+}
+
+struct Bar {
+    _reg: Registration,
+}
+
+impl Bar {
+    fn new() -> Self {
+        Self { _reg: register() }
+    }
+}
+
+impl fmt::Display for Bar {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "BAR")
+    }
+}
+
 fn main() {
-    let tree = Node::new().add(1).add("foo").add(Node::new().add(2).add(3));
+    let tree = Node::new()
+        .add(1)
+        .add(Foo::new())
+        .add(Node::new().add(2).add(Bar::new()));
     println!("{}", tree);
 }
