@@ -1,10 +1,10 @@
 # async-call
 
-Consider GUI implementation where widgets are grouped into tree where parent owns it's subordinates.
+Consider typical GUI implementation where widgets are grouped into some tree.
 
 Usually it's OK for any widget to call methods of other widgets. For example button can have a handler which adds row to table. Yes, in large projects it may lead to a mess and better to avoid such architectures. But on the other hand sometimes it can be convenient.
 
-In Rust it's impossible to call one widget from another because of borrow checker. All widgets belongs to their hosts which holds mutable references to them. So only parent is allowed to do anything with it's childs.
+In Rust it's impossible to call one widget from another because of borrow checker. All widgets belongs to their hosts which holds mutable references to them. So only parent is allowed to do access it's childs.
 
 This restriction can be bypassed using messages. Node A can't access node B directly, but it can post some message for B and wait for answer.
 
