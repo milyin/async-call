@@ -1,4 +1,4 @@
-use async_call::{register, Registration};
+use async_call::{register, Id, Registration};
 use std::fmt;
 
 struct Node<'a> {
@@ -28,12 +28,39 @@ impl fmt::Display for Node<'_> {
 }
 
 struct Foo {
-    _reg: Registration,
+    counter: usize,
+    reg: Registration,
+}
+
+#[derive(Copy, Clone)]
+struct FooId(Id);
+
+enum FooOp {
+    Inc,
+}
+
+impl FooId {
+    async fn inc(&self) -> Result<(),()> {
+        self.0.send_request(FooOp::Inc).await?;
+        Ok(())
+    }
 }
 
 impl Foo {
     fn new() -> Self {
-        Self { _reg: register() }
+        Self {
+            counter: 0,
+            reg: register(),
+        }
+    }
+    fn inc(&mut self) {
+        self.counter += 1
+    }
+    fn id(&self) -> FooId {
+        FooId(self.reg.id())
+    }
+    fn update(&self) {
+        self.reg.process_requests(|req| None)
     }
 }
 
@@ -43,26 +70,16 @@ impl fmt::Display for Foo {
     }
 }
 
-struct Bar {
-    _reg: Registration,
-}
-
-impl Bar {
-    fn new() -> Self {
-        Self { _reg: register() }
-    }
-}
-
-impl fmt::Display for Bar {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "BAR")
-    }
-}
-
 fn main() {
+    let foo1 = Foo::new();
+    let foo2 = Foo::new();
+    let pfoo1 = foo1.id();
     let tree = Node::new()
         .add(1)
-        .add(Foo::new())
-        .add(Node::new().add(2).add(Bar::new()));
+        .add(foo1)
+        .add(Node::new().add(2).add(foo2));
+    println!("{}", tree);
+    let future = pfoo1.inc();
+    // How to run it?
     println!("{}", tree);
 }
