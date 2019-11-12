@@ -6,7 +6,7 @@ Usually it's OK for any widget to call methods of other widgets. For example but
 
 In Rust it's impossible to call one widget from another because of borrow checker. All widgets belongs to their hosts which holds mutable references to them. So only parent is allowed to do anything with it's childs.
 
-We can bypass this restriction using message passing. We can't access node A node from node B directly, but B can post some message for A and wait for answer.
+This restriction can be bypassed using messages. Node A can't access node B directly, but it can post some message for B and wait for answer.
 
 The purpose of this library is to wrap this message passing into async method calls to make user code clear.
 
