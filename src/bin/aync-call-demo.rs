@@ -1,4 +1,4 @@
-use async_call::{register, Id, Registration};
+use async_call::{register_service, SrvId, ServiceRegistration, send_request};
 use std::fmt;
 
 struct Node<'a> {
@@ -29,11 +29,11 @@ impl fmt::Display for Node<'_> {
 
 struct Foo {
     counter: usize,
-    reg: Registration,
+    reg: ServiceRegistration,
 }
 
 #[derive(Copy, Clone)]
-struct FooId(Id);
+struct FooId(SrvId);
 
 enum FooOp {
     Inc,
@@ -41,7 +41,7 @@ enum FooOp {
 
 impl FooId {
     async fn inc(&self) -> Result<(),()> {
-        self.0.send_request(FooOp::Inc).await?;
+        send_request(self.0, FooOp::Inc).await?;
         Ok(())
     }
 }
@@ -50,7 +50,7 @@ impl Foo {
     fn new() -> Self {
         Self {
             counter: 0,
-            reg: register(),
+            reg: register_service(),
         }
     }
     fn inc(&mut self) {
