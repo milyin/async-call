@@ -4,9 +4,10 @@ extern crate lazy_static;
 use std::any::Any;
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
+use std::hash::Hash;
 use std::pin::Pin;
 use std::sync::Mutex;
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, Waker};
 
 #[derive(Copy, Clone, Default, PartialEq, Eq, Hash, Debug)]
 pub struct SrvId(usize);
@@ -29,7 +30,8 @@ impl ReqId {
 #[derive(Debug)]
 struct MessageQueues {
     requests: HashMap<SrvId, VecDeque<(ReqId, Box<dyn Any + Send>)>>,
-    responses: HashMap<(SrvId, ReqId), Option<Box<dyn Any + Send>>>,
+    responses: HashMap<ReqId, Option<Box<dyn Any + Send>>>,
+    wakers: HashMap<ReqId, Waker>,
     next_srv_id: SrvId,
     next_req_id: ReqId,
 }
@@ -39,6 +41,7 @@ impl MessageQueues {
         Self {
             requests: HashMap::new(),
             responses: HashMap::new(),
+            wakers: HashMap::new(),
             next_srv_id: SrvId::default(),
             next_req_id: ReqId::default(),
         }
@@ -47,22 +50,18 @@ impl MessageQueues {
         let id = self.next_srv_id;
         self.requests.insert(id, VecDeque::new());
         self.next_srv_id = self.next_srv_id.next();
-        dbg!(self);
         id
     }
     fn unregister(&mut self, srv_id: SrvId) {
         self.requests.remove(&srv_id);
-        dbg!(self);
     }
     fn post_request(&mut self, srv_id: SrvId, request: Box<dyn Any + Send>) -> Option<ReqId> {
         if let Some(queue) = self.requests.get_mut(&srv_id) {
             let req_id = self.next_req_id;
             queue.push_front((req_id, request));
             self.next_req_id = self.next_req_id.next();
-            dbg!(self);
             Some(req_id)
         } else {
-            dbg!(self);
             None
         }
     }
@@ -73,22 +72,27 @@ impl MessageQueues {
             panic!("No service with id {:?} found", srv_id)
         }
     }
-    fn set_response(&mut self, srv_id: SrvId, req_id: ReqId, resp: Option<Box<dyn Any + Send>>) {
-        self.responses.insert((srv_id, req_id), resp);
+    fn set_response(&mut self, req_id: ReqId, resp: Option<Box<dyn Any + Send>>) {
+        self.responses.insert(req_id, resp);
+        if let Some(waker) = self.wakers.remove(&req_id) {
+            waker.wake()
+        }
     }
     fn check_response(
         &mut self,
         srv_id: SrvId,
         req_id: ReqId,
+        waker: Waker,
     ) -> Result<Option<Box<dyn Any + Send>>, ()> {
-        match self.responses.remove(&(srv_id, req_id)) {
+        match self.responses.remove(&req_id) {
             // Normal response
             Some(resp @ Some(_)) => Ok(resp),
-            // Request not recognized
+            // Request handled by service but not recognized
             Some(None) => Err(()),
             None => {
                 if self.requests.contains_key(&srv_id) {
                     // Response pending
+                    self.wakers.insert(req_id, waker);
                     Ok(None)
                 } else {
                     // No service to answer
@@ -110,6 +114,15 @@ pub fn send_request(
     Request::new(srv_id, post_request(srv_id, Box::new(request)))
 }
 
+pub fn serve_requests<F>(srv_id: SrvId, mut f: F)
+where
+    F: FnMut(Box<dyn Any + Send>) -> Option<Box<dyn Any + Send>>,
+{
+    while let Some((req_id, req)) = take_request(srv_id) {
+        set_response(req_id, f(req))
+    }
+}
+
 pub struct ServiceRegistration {
     srv_id: SrvId,
 }
@@ -117,15 +130,6 @@ pub struct ServiceRegistration {
 impl ServiceRegistration {
     pub fn id(&self) -> SrvId {
         self.srv_id
-    }
-
-    pub fn process_requests<F>(&self, f: F)
-    where
-        F: Fn(Box<dyn Any + Send>) -> Option<Box<dyn Any + Send>>,
-    {
-        while let Some((req_id, req)) = take_request(self.srv_id) {
-            set_response(self.srv_id, req_id, f(req))
-        }
     }
 }
 
@@ -153,14 +157,18 @@ fn take_request(srv_id: SrvId) -> Option<(ReqId, Box<dyn Any + Send>)> {
     global.take_request(srv_id)
 }
 
-fn set_response(srv_id: SrvId, req_id: ReqId, resp: Option<Box<dyn Any + Send>>) {
+fn set_response(req_id: ReqId, resp: Option<Box<dyn Any + Send>>) {
     let mut global = GLOBAL_MESSAGE_QUEUES.lock().unwrap();
-    global.set_response(srv_id, req_id, resp)
+    global.set_response(req_id, resp)
 }
 
-fn check_response(srv_id: SrvId, req_id: ReqId) -> Result<Option<Box<dyn Any + Send>>, ()> {
+fn check_response(
+    srv_id: SrvId,
+    req_id: ReqId,
+    waker: Waker,
+) -> Result<Option<Box<dyn Any + Send>>, ()> {
     let mut global = GLOBAL_MESSAGE_QUEUES.lock().unwrap();
-    global.check_response(srv_id, req_id)
+    global.check_response(srv_id, req_id, waker)
 }
 
 struct Request {
@@ -176,9 +184,9 @@ impl Request {
 
 impl Future for Request {
     type Output = Result<Box<dyn Any + Send>, ()>;
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         if let Some(req_id) = self.opt_req_id {
-            match check_response(self.srv_id, req_id) {
+            match check_response(self.srv_id, req_id, cx.waker().clone()) {
                 Ok(Some(resp)) => Poll::Ready(Ok(resp)),
                 Ok(None) => Poll::Pending,
                 Err(_) => Poll::Ready(Err(())),
