@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate lazy_static;
 
-use std::any::Any;
+use std::any::{Any, type_name};
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::hash::Hash;
@@ -114,6 +114,20 @@ pub fn send_request(
     Request::new(srv_id, post_request(srv_id, Box::new(request)))
 }
 
+pub async fn send_request_typed<T>(srv_id: SrvId, request: impl Any + Send) -> Result<T,()>
+where T: Any + Send
+{
+    let answer = send_request(srv_id, request).await?;
+    dbg!(type_name::<T>());
+    if let Ok(res) = answer.downcast::<T>() {
+        dbg!("Ok");
+        Ok(*res)
+    } else {
+        dbg!("Err");
+        Err(())
+    }
+}
+
 pub fn serve_requests<F>(srv_id: SrvId, mut f: F)
 where
     F: FnMut(Box<dyn Any + Send>) -> Option<Box<dyn Any + Send>>,
@@ -121,6 +135,20 @@ where
     while let Some((req_id, req)) = take_request(srv_id) {
         set_response(req_id, f(req))
     }
+}
+
+pub fn serve_requests_typed<T, F>(srv_id: SrvId, mut f: F)
+where
+    T: Any + Send,
+    F: FnMut(T) -> Option<Box<dyn Any + Send>>,
+{
+    serve_requests(srv_id, |req| {
+        if let Ok(op) = req.downcast::<T>() {
+            f(*op)
+        } else {
+            None
+        }
+    })
 }
 
 pub struct ServiceRegistration {

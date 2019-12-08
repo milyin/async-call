@@ -1,9 +1,9 @@
-use async_call::{register_service, SrvId, ServiceRegistration, send_request, serve_requests};
+use async_call::{register_service, SrvId, ServiceRegistration, send_request, serve_requests_typed, send_request_typed};
 use std::fmt;
 use async_std::{task, future};
-use std::io;
 use std::time::Duration;
-use std::thread::spawn;
+use std::thread::{spawn, sleep};
+use std::rc::Rc;
 
 trait Update {
     fn update(&mut self) {}
@@ -11,8 +11,6 @@ trait Update {
 
 trait Node : Update + fmt::Display {}
 impl<T> Node for T where T: Update + fmt::Display {}
-
-impl Update for u64 {}
 
 struct Parent<'a> {
     children: Vec<Box<dyn Node + 'a>>,
@@ -48,97 +46,124 @@ impl Update for Parent<'_> {
     }
 }
 
-struct Foo {
-    counter: usize,
+struct Value {
+    value: usize,
     reg: ServiceRegistration,
 }
 
 #[derive(Copy, Clone)]
-struct FooId(SrvId);
+struct ValueId(SrvId);
 
-enum FooOp {
-    Inc,
+enum ValueOp {
+    Set(usize),
+    Get,
 }
 
-impl FooId {
-    async fn inc(self) -> Result<(),()> {
-        dbg!("inc start");
-        send_request(self.0, FooOp::Inc).await?;
-        dbg!("inc end");
+impl ValueId {
+    async fn set(self, value: usize) -> Result<(),()> {
+        send_request(self.0, ValueOp::Set(value)).await?;
         Ok(())
+    }
+    async fn get(self) -> Result<usize,()> {
+        send_request_typed(self.0, ValueOp::Get).await
     }
 }
 
-impl Update for Foo {
+impl Update for Value {
     fn update(&mut self) {
-        serve_requests(self.reg.id(), |req| {
-            if let Ok(op) = req.downcast::<FooOp>() {
-                match *op {
-                    FooOp::Inc => {
-                        dbg!("inc");
-                        self.inc();
-                        Some(Box::new(()))
+        serve_requests_typed(self.reg.id(), |req| {
+                match req {
+                    ValueOp::Get => {
+                        Some(Box::new(self.get()))
                     },
+                    ValueOp::Set(value) => {
+                        self.set(value);
+                        Some(Box::new(()))
+                    }
                 }
-            } else {
-                None
-            }
         })
     }
 }
 
-impl Foo {
+impl Value {
     fn new() -> Self {
         Self {
-            counter: 0,
+            value: 0,
             reg: register_service(),
         }
     }
-    fn inc(&mut self) {
-        self.counter += 1;
-        dbg!(self.counter);
+    fn get(&self) -> usize {
+        self.value
     }
-    fn id(&self) -> FooId {
-        FooId(self.reg.id())
+    fn set(&mut self, value: usize) {
+        self.value = value
+    }
+    fn id(&self) -> ValueId {
+        ValueId(self.reg.id())
     }
 }
 
-impl fmt::Display for Foo {
+impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FOO({})", self.counter)
+        write!(f, "VALUE({})", self.value)
+    }
+}
+
+struct Button<'a> {
+    on_click: Option<Rc<dyn Fn() + 'a>>,
+    reg: ServiceRegistration,
+}
+
+impl<'a> Button<'a> {
+    pub fn new() -> Self {
+        Self { on_click: None, reg: register_service() }
+    }
+    pub fn on_click(&mut self, handler: impl Fn() + 'a) {
+        self.on_click = Some(Rc::new(move || { handler(); }));
+    }
+}
+
+enum ButtonOp {
+    Click,
+}
+
+impl<'a> Update for Button<'a> {
+    fn update(&mut self) {
+        serve_requests_typed(self.reg.id(), |req| {
+                match req {
+                    ButtonOp::Click => {
+                        dbg!("click");
+                        Some(Box::new(()))
+                    },
+                }
+        })
     }
 }
 
 fn main() {
-    let foo1 = Foo::new();
-    let foo2 = Foo::new();
+    let foo1 = Value::new();
+    let foo2 = Value::new();
     let pfoo1 = foo1.id();
+    let pfoo2 = foo1.id();
     let mut tree = Parent::new()
-        .add(1)
         .add(foo1)
-        .add(Parent::new().add(2).add(foo2));
+        .add(Parent::new().add(foo2));
     println!("before {}", tree);
 
-//    spawn(move || {
-//        task::block_on(future::pending::<()>());
-//    });
+    spawn( move || {
+        task::block_on(future::pending::<()>());
+    });
 
-    loop {
-        let mut command = String::new();
-        if let Ok(_) = io::stdin().read_line(&mut command) {
-            match command.trim_end() {
-                "inc" => {task::spawn(pfoo1.inc());},
-                "exit" => break,
-                other => println!("Unknown command {}", other)
-            }
-//            dbg!("1");
-            task::block_on(future::timeout(Duration::default(), future::pending::<()>()));
-//            dbg!("2");
-            tree.update();
-//            dbg!("3");
-            task::block_on(future::timeout(Duration::default(), future::pending::<()>()));
-            println!("{}", tree);
-        }
+    task::spawn(async move {
+        pfoo1.set(42).await.unwrap();
+        let q = pfoo1.get().await.unwrap();
+        pfoo2.set(q+1).await.unwrap();
+    } );
+
+    for step in 0..10 {
+        println!("{} : {}", step, tree);
+        tree.update();
+        sleep(Duration::from_secs(1));
     }
-    println!("after {}", tree);
+
 }
