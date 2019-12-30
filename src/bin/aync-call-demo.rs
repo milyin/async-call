@@ -1,15 +1,21 @@
-use async_call::{register_service, SrvId, ServiceRegistration, send_request, serve_requests_typed, send_request_typed};
+#![feature(async_closure)]
+
+use async_call::{
+    dbg_message_queues, register_service, send_request, send_request_typed, serve_requests_typed,
+    ServiceRegistration, SrvId,
+};
+use async_std::{future, task};
 use std::fmt;
-use async_std::{task, future};
-use std::time::Duration;
-use std::thread::{spawn, sleep};
+use std::future::Future;
 use std::rc::Rc;
+use std::thread::{sleep, spawn};
+use std::time::Duration;
 
 trait Update {
     fn update(&mut self) {}
 }
 
-trait Node : Update + fmt::Display {}
+trait Node: Update + fmt::Display {}
 impl<T> Node for T where T: Update + fmt::Display {}
 
 struct Parent<'a> {
@@ -40,9 +46,9 @@ impl fmt::Display for Parent<'_> {
 
 impl Update for Parent<'_> {
     fn update(&mut self) {
-       for c in &mut self.children {
-           c.update();
-       }
+        for c in &mut self.children {
+            c.update();
+        }
     }
 }
 
@@ -54,33 +60,30 @@ struct Value {
 #[derive(Copy, Clone)]
 struct ValueId(SrvId);
 
+#[derive(Copy, Clone, Debug)]
 enum ValueOp {
     Set(usize),
     Get,
 }
 
 impl ValueId {
-    async fn set(self, value: usize) -> Result<(),()> {
+    async fn set(self, value: usize) -> Result<(), ()> {
         send_request(self.0, ValueOp::Set(value)).await?;
         Ok(())
     }
-    async fn get(self) -> Result<usize,()> {
+    async fn get(self) -> Result<usize, ()> {
         send_request_typed(self.0, ValueOp::Get).await
     }
 }
 
 impl Update for Value {
     fn update(&mut self) {
-        serve_requests_typed(self.reg.id(), |req| {
-                match req {
-                    ValueOp::Get => {
-                        Some(Box::new(self.get()))
-                    },
-                    ValueOp::Set(value) => {
-                        self.set(value);
-                        Some(Box::new(()))
-                    }
-                }
+        serve_requests_typed(self.reg.id(), |req| match req {
+            ValueOp::Get => Some(Box::new(self.get())),
+            ValueOp::Set(value) => {
+                self.set(value);
+                Some(Box::new(()))
+            }
         })
     }
 }
@@ -109,6 +112,15 @@ impl fmt::Display for Value {
     }
 }
 
+#[derive(Copy, Clone)]
+struct ButtonId(SrvId);
+
+impl ButtonId {
+    async fn click(&self) -> Result<(), ()> {
+        send_request_typed(self.0, ButtonOp::Click).await
+    }
+}
+
 struct Button<'a> {
     on_click: Option<Rc<dyn Fn() + 'a>>,
     reg: ServiceRegistration,
@@ -116,54 +128,91 @@ struct Button<'a> {
 
 impl<'a> Button<'a> {
     pub fn new() -> Self {
-        Self { on_click: None, reg: register_service() }
+        Self {
+            on_click: None,
+            reg: register_service(),
+        }
     }
-    pub fn on_click(&mut self, handler: impl Fn() + 'a) {
-        self.on_click = Some(Rc::new(move || { handler(); }));
+    pub fn on_click<FUTURE: 'static + Send + Future<Output = ()>, T: 'a + Fn() -> FUTURE>(
+        &mut self,
+        handler: T,
+    ) {
+        self.on_click = Some(Rc::new(move || {
+            task::spawn(handler());
+        }));
+    }
+    fn id(&self) -> ButtonId {
+        ButtonId(self.reg.id())
     }
 }
 
+impl<'a> fmt::Display for Button<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "VALUE")
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
 enum ButtonOp {
     Click,
 }
 
 impl<'a> Update for Button<'a> {
     fn update(&mut self) {
-        serve_requests_typed(self.reg.id(), |req| {
-                match req {
-                    ButtonOp::Click => {
-                        dbg!("click");
-                        Some(Box::new(()))
-                    },
+        serve_requests_typed(self.reg.id(), |req| match req {
+            ButtonOp::Click => {
+                dbg!("Click");
+                if let Some(ref handler) = self.on_click {
+                    handler();
                 }
+                Some(Box::new(()))
+            }
         })
     }
 }
 
 fn main() {
-    let foo1 = Value::new();
-    let foo2 = Value::new();
-    let pfoo1 = foo1.id();
-    let pfoo2 = foo1.id();
+    let valA = Value::new();
+    let valB = Value::new();
+    let valAB = Value::new();
+    let mut button = Button::new();
+    let pvalA = valA.id();
+    let pvalB = valB.id();
+    let pvalAB = valAB.id();
+    let pbtn = button.id();
+    button.on_click(async move || {
+        dbg!("on click");
+        let a = pvalA.get().await.unwrap();
+        let b = pvalB.get().await.unwrap();
+        pvalAB.set(a + b).await;
+    });
     let mut tree = Parent::new()
-        .add(foo1)
-        .add(Parent::new().add(foo2));
+        .add(valA)
+        .add(valB)
+        .add(Parent::new().add(valAB).add(button));
     println!("before {}", tree);
 
-    spawn( move || {
+    spawn(move || {
         task::block_on(future::pending::<()>());
     });
 
     task::spawn(async move {
-        pfoo1.set(42).await.unwrap();
-        let q = pfoo1.get().await.unwrap();
-        pfoo2.set(q+1).await.unwrap();
-    } );
+        dbg!("set a");
+        pvalA.set(42).await.unwrap();
+        dbg!("get a");
+        let q = pvalA.get().await.unwrap();
+        dbg!("set b");
+        pvalB.set(q + 1).await.unwrap();
+        dbg!("click");
+        pbtn.click().await;
+        dbg!("end");
+    });
 
     for step in 0..10 {
         println!("{} : {}", step, tree);
+        dbg_message_queues();
         tree.update();
+        dbg_message_queues();
         sleep(Duration::from_secs(1));
     }
-
 }
