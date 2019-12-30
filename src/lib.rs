@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate lazy_static;
 
-use std::any::{type_name, Any, TypeId};
+use std::any::{Any, TypeId};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::future::Future;
@@ -31,6 +31,7 @@ impl ReqId {
 pub trait Message: Any + Debug + Send {}
 impl<T> Message for T where T: Any + Debug + Send {}
 impl dyn Message {
+    // Code copied from impl dyn Any
     pub fn downcast_ref<T: Any>(&self) -> Option<&T> {
         if self.type_id() == TypeId::of::<T>() {
             unsafe { Some(&*(self as *const dyn Message as *const T)) }
@@ -149,12 +150,9 @@ where
     T: Message + Copy,
 {
     let answer = send_request(srv_id, request).await?;
-    dbg!(type_name::<T>());
     if let Some(res) = answer.downcast_ref::<T>() {
-        dbg!("Ok");
         Ok(*res)
     } else {
-        dbg!("Err");
         Err(())
     }
 }

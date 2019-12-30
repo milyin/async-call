@@ -148,7 +148,7 @@ impl<'a> Button<'a> {
 
 impl<'a> fmt::Display for Button<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "VALUE")
+        write!(f, "BUTTON")
     }
 }
 
