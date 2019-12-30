@@ -172,24 +172,24 @@ impl<'a> Update for Button<'a> {
 }
 
 fn main() {
-    let valA = Value::new();
-    let valB = Value::new();
-    let valAB = Value::new();
+    let val_a = Value::new();
+    let val_b = Value::new();
+    let val_ab = Value::new();
     let mut button = Button::new();
-    let pvalA = valA.id();
-    let pvalB = valB.id();
-    let pvalAB = valAB.id();
+    let pval_a = val_a.id();
+    let pval_b = val_b.id();
+    let pval_ab = val_ab.id();
     let pbtn = button.id();
     button.on_click(async move || {
         dbg!("on click");
-        let a = pvalA.get().await.unwrap();
-        let b = pvalB.get().await.unwrap();
-        pvalAB.set(a + b).await;
+        let a = pval_a.get().await.unwrap();
+        let b = pval_b.get().await.unwrap();
+        pval_ab.set(a + b).await.unwrap();
     });
     let mut tree = Parent::new()
-        .add(valA)
-        .add(valB)
-        .add(Parent::new().add(valAB).add(button));
+        .add(val_a)
+        .add(val_b)
+        .add(Parent::new().add(val_ab).add(button));
     println!("before {}", tree);
 
     spawn(move || {
@@ -198,13 +198,13 @@ fn main() {
 
     task::spawn(async move {
         dbg!("set a");
-        pvalA.set(42).await.unwrap();
+        pval_a.set(42).await.unwrap();
         dbg!("get a");
-        let q = pvalA.get().await.unwrap();
+        let q = pval_a.get().await.unwrap();
         dbg!("set b");
-        pvalB.set(q + 1).await.unwrap();
+        pval_b.set(q + 1).await.unwrap();
         dbg!("click");
-        pbtn.click().await;
+        pbtn.click().await.unwrap();
         dbg!("end");
     });
 
