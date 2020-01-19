@@ -1,8 +1,5 @@
-#![feature(async_closure)]
-
 use async_call::{
-    dbg_message_queues, register_service, send_request, send_request_typed, serve_requests_typed,
-    ServiceRegistration, SrvId,
+    dbg_message_queues, register_service, send_request, serve_requests, ServiceRegistration, SrvId,
 };
 use async_std::{future, task};
 use std::fmt;
@@ -72,13 +69,13 @@ impl ValueId {
         Ok(())
     }
     async fn get(self) -> Result<usize, ()> {
-        send_request_typed(self.0, ValueOp::Get).await
+        send_request(self.0, ValueOp::Get).await
     }
 }
 
 impl Update for Value {
     fn update(&mut self) {
-        serve_requests_typed(self.reg.id(), |req| match req {
+        serve_requests(self.reg.id(), |req| match req {
             ValueOp::Get => Some(Box::new(self.get())),
             ValueOp::Set(value) => {
                 self.set(value);
@@ -117,7 +114,7 @@ struct ButtonId(SrvId);
 
 impl ButtonId {
     async fn click(&self) -> Result<(), ()> {
-        send_request_typed(self.0, ButtonOp::Click).await
+        send_request(self.0, ButtonOp::Click).await
     }
 }
 
@@ -159,7 +156,7 @@ enum ButtonOp {
 
 impl<'a> Update for Button<'a> {
     fn update(&mut self) {
-        serve_requests_typed(self.reg.id(), |req| match req {
+        serve_requests(self.reg.id(), |req| match req {
             ButtonOp::Click => {
                 dbg!("Click");
                 if let Some(ref handler) = self.on_click {
@@ -180,11 +177,13 @@ fn main() {
     let pval_b = val_b.id();
     let pval_ab = val_ab.id();
     let pbtn = button.id();
-    button.on_click(async move || {
-        dbg!("on click");
-        let a = pval_a.get().await.unwrap();
-        let b = pval_b.get().await.unwrap();
-        pval_ab.set(a + b).await.unwrap();
+    button.on_click(move || {
+        task::spawn(async move {
+            dbg!("on click");
+            let a = pval_a.get().await.unwrap();
+            let b = pval_b.get().await.unwrap();
+            pval_ab.set(a + b).await.unwrap();
+        })
     });
     let mut tree = Parent::new()
         .add(val_a)

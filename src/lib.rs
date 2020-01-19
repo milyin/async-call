@@ -138,18 +138,18 @@ pub fn dbg_message_queues() {
     global.dbg();
 }
 
-pub fn send_request(
+fn send_request_untyped(
     srv_id: SrvId,
     request: impl Message,
 ) -> impl Future<Output = Result<Box<dyn Message>, ()>> {
     Request::new(srv_id, post_request(srv_id, Box::new(request)))
 }
 
-pub async fn send_request_typed<T>(srv_id: SrvId, request: impl Message) -> Result<T, ()>
+pub async fn send_request<T>(srv_id: SrvId, request: impl Message) -> Result<T, ()>
 where
     T: Message + Copy,
 {
-    let answer = send_request(srv_id, request).await?;
+    let answer = send_request_untyped(srv_id, request).await?;
     if let Some(res) = answer.downcast_ref::<T>() {
         Ok(*res)
     } else {
@@ -157,7 +157,7 @@ where
     }
 }
 
-pub fn serve_requests<F>(srv_id: SrvId, mut f: F)
+fn serve_requests_untyped<F>(srv_id: SrvId, mut f: F)
 where
     F: FnMut(Box<dyn Message>) -> Option<Box<dyn Message>>,
 {
@@ -166,12 +166,12 @@ where
     }
 }
 
-pub fn serve_requests_typed<T, F>(srv_id: SrvId, mut f: F)
+pub fn serve_requests<T, F>(srv_id: SrvId, mut f: F)
 where
     T: Any + Send + Copy,
     F: FnMut(T) -> Option<Box<dyn Message>>,
 {
-    serve_requests(srv_id, |req| {
+    serve_requests_untyped(srv_id, |req| {
         if let Some(op) = req.downcast_ref::<T>() {
             f(*op)
         } else {
