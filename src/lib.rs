@@ -30,6 +30,7 @@ impl ReqId {
 
 pub trait Message: Any + Debug + Send {}
 impl<T> Message for T where T: Any + Debug + Send {}
+
 //
 // Code copied from impl dyn Any
 //
@@ -56,6 +57,25 @@ impl dyn Message {
             unsafe { Some(&mut *(self as *mut dyn Message as *mut T)) }
         } else {
             None
+        }
+    }
+}
+
+//
+// Code copied (with small changes) from impl Box<dyn Any>
+//
+pub trait DowncastMessage {
+    fn downcast<T: Any>(self) -> Result<Box<T>, Box<dyn Message>>;
+}
+impl DowncastMessage for Box<dyn Message> {
+    fn downcast<T: Any>(self) -> Result<Box<T>, Box<dyn Message>> {
+        if self.is::<T>() {
+            unsafe {
+                let raw: *mut dyn Message = Box::into_raw(self);
+                Ok(Box::from_raw(raw as *mut T))
+            }
+        } else {
+            Err(self)
         }
     }
 }
@@ -166,15 +186,10 @@ fn send_request_untyped(
 
 pub async fn send_request<T>(srv_id: SrvId, request: impl Message) -> Result<T, ()>
 where
-    T: Message + Default,
+    T: Message,
 {
-    let mut answer = send_request_untyped(srv_id, request).await?;
-    if let Some(res) = answer.downcast_mut::<T>() {
-        let res = std::mem::replace(res, T::default());
-        Ok(res)
-    } else {
-        Err(())
-    }
+    let answer = send_request_untyped(srv_id, request).await?;
+    answer.downcast::<T>().map(|res| *res).or(Err(()))
 }
 
 fn serve_requests_untyped<F>(srv_id: SrvId, mut f: F)
@@ -188,16 +203,11 @@ where
 
 pub fn serve_requests<T, F>(srv_id: SrvId, mut f: F)
 where
-    T: Any + Send + Default,
+    T: Any + Send,
     F: FnMut(T) -> Option<Box<dyn Message>>,
 {
-    serve_requests_untyped(srv_id, |mut req| {
-        if let Some(op) = req.downcast_mut::<T>() {
-            let op = std::mem::replace(op, T::default());
-            f(op)
-        } else {
-            None
-        }
+    serve_requests_untyped(srv_id, |req| {
+        req.downcast::<T>().map(|op| f(*op)).unwrap_or(None)
     })
 }
 
