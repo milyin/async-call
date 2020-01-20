@@ -57,10 +57,17 @@ struct Value {
 #[derive(Copy, Clone)]
 struct ValueId(SrvId);
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Debug)]
 enum ValueOp {
+    None,
     Set(usize),
     Get,
+}
+
+impl Default for ValueOp {
+    fn default() -> Self {
+        ValueOp::None
+    }
 }
 
 impl ValueId {
@@ -81,6 +88,7 @@ impl Update for Value {
                 self.set(value);
                 Some(Box::new(()))
             }
+            ValueOp::None => panic!("ValueOp::None not expected"),
         })
     }
 }
@@ -149,9 +157,16 @@ impl<'a> fmt::Display for Button<'a> {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Debug)]
 enum ButtonOp {
+    None,
     Click,
+}
+
+impl Default for ButtonOp {
+    fn default() -> Self {
+        ButtonOp::None
+    }
 }
 
 impl<'a> Update for Button<'a> {
@@ -164,6 +179,7 @@ impl<'a> Update for Button<'a> {
                 }
                 Some(Box::new(()))
             }
+            ButtonOp::None => panic!("ButtonOp::None not expected"),
         })
     }
 }

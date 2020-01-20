@@ -30,11 +30,30 @@ impl ReqId {
 
 pub trait Message: Any + Debug + Send {}
 impl<T> Message for T where T: Any + Debug + Send {}
+//
+// Code copied from impl dyn Any
+//
 impl dyn Message {
-    // Code copied from impl dyn Any
+    pub fn is<T: Any>(&self) -> bool {
+        // Get `TypeId` of the type this function is instantiated with.
+        let t = TypeId::of::<T>();
+
+        // Get `TypeId` of the type in the trait object.
+        let concrete = self.type_id();
+
+        // Compare both `TypeId`s on equality.
+        t == concrete
+    }
     pub fn downcast_ref<T: Any>(&self) -> Option<&T> {
-        if self.type_id() == TypeId::of::<T>() {
+        if self.is::<T>() {
             unsafe { Some(&*(self as *const dyn Message as *const T)) }
+        } else {
+            None
+        }
+    }
+    pub fn downcast_mut<T: Any>(&mut self) -> Option<&mut T> {
+        if self.is::<T>() {
+            unsafe { Some(&mut *(self as *mut dyn Message as *mut T)) }
         } else {
             None
         }
@@ -147,11 +166,12 @@ fn send_request_untyped(
 
 pub async fn send_request<T>(srv_id: SrvId, request: impl Message) -> Result<T, ()>
 where
-    T: Message + Copy,
+    T: Message + Default,
 {
-    let answer = send_request_untyped(srv_id, request).await?;
-    if let Some(res) = answer.downcast_ref::<T>() {
-        Ok(*res)
+    let mut answer = send_request_untyped(srv_id, request).await?;
+    if let Some(res) = answer.downcast_mut::<T>() {
+        let res = std::mem::replace(res, T::default());
+        Ok(res)
     } else {
         Err(())
     }
@@ -168,12 +188,13 @@ where
 
 pub fn serve_requests<T, F>(srv_id: SrvId, mut f: F)
 where
-    T: Any + Send + Copy,
+    T: Any + Send + Default,
     F: FnMut(T) -> Option<Box<dyn Message>>,
 {
-    serve_requests_untyped(srv_id, |req| {
-        if let Some(op) = req.downcast_ref::<T>() {
-            f(*op)
+    serve_requests_untyped(srv_id, |mut req| {
+        if let Some(op) = req.downcast_mut::<T>() {
+            let op = std::mem::replace(op, T::default());
+            f(op)
         } else {
             None
         }
